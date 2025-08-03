@@ -13,7 +13,7 @@ load_dotenv()
 
 # Configure Gemini
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+gemini_model = genai.GenerativeModel('gemini-2.0-flash')
 SYSTEM = "You are CodeCrafter, an intelligent AI coding assistant. You help developers with their coding tasks, manage expenses, and provide comprehensive assistance using available MCP server tools. Be helpful, precise, and maintain context throughout conversations."
 
 
@@ -23,40 +23,16 @@ def flatten(xss):
 
 @cl.on_mcp_connect
 async def on_mcp(connection, session: ClientSession):
-    try:
-        print(f"Attempting to connect to MCP server: {connection.name}")
-        result = await session.list_tools()
-        print(f"Successfully listed tools from {connection.name}: {len(result.tools)} tools found")
-        
-        tools = []
-        for t in result.tools:
-            try:
-                tool_data = {
-                    "name": t.name,
-                    "description": t.description,
-                    "input_schema": t.inputSchema,
-                }
-                tools.append(tool_data)
-                print(f"Added tool: {t.name}")
-            except Exception as tool_error:
-                print(f"Error processing tool {getattr(t, 'name', 'unknown')}: {tool_error}")
-                continue
-        
-        mcp_tools = cl.user_session.get("mcp_tools", {})
-        mcp_tools[connection.name] = tools
-        cl.user_session.set("mcp_tools", mcp_tools)
-        
-        print(f"Successfully connected to MCP server {connection.name} with {len(tools)} tools")
-        
-    except Exception as e:
-        print(f"Error connecting to MCP server {connection.name}: {str(e)}")
-        import traceback
-        print(f"MCP connection traceback: {traceback.format_exc()}")
-        
-        # Still set an empty tools list to avoid KeyError later
-        mcp_tools = cl.user_session.get("mcp_tools", {})
-        mcp_tools[connection.name] = []
-        cl.user_session.set("mcp_tools", mcp_tools)
+    result = await session.list_tools()
+    tools = [{
+        "name": t.name,
+        "description": t.description,
+        "input_schema": t.inputSchema,
+        } for t in result.tools]
+    
+    mcp_tools = cl.user_session.get("mcp_tools", {})
+    mcp_tools[connection.name] = tools
+    cl.user_session.set("mcp_tools", mcp_tools)
 
 
 @cl.step(type="tool") 
@@ -67,51 +43,31 @@ async def call_tool(tool_use):
     current_step = cl.context.current_step
     current_step.name = tool_name
     
-    try:
-        # Identify which mcp is used
-        mcp_tools = cl.user_session.get("mcp_tools", {})
-        mcp_name = None
+    # Identify which mcp is used
+    mcp_tools = cl.user_session.get("mcp_tools", {})
+    mcp_name = None
 
-        for connection_name, tools in mcp_tools.items():
-            if any(tool.get("name") == tool_name for tool in tools):
-                mcp_name = connection_name
-                break
-        
-        if not mcp_name:
-            error_msg = f"Tool {tool_name} not found in any MCP connection"
-            print(error_msg)
-            current_step.output = json.dumps({"error": error_msg})
-            return current_step.output
-        
-        # Get the MCP session
-        mcp_sessions = getattr(cl.context.session, 'mcp_sessions', {})
-        if mcp_name not in mcp_sessions:
-            error_msg = f"MCP session {mcp_name} not found"
-            print(error_msg)
-            current_step.output = json.dumps({"error": error_msg})
-            return current_step.output
-            
-        mcp_session, _ = mcp_sessions.get(mcp_name)
-        
-        if not mcp_session:
-            error_msg = f"MCP session {mcp_name} is None"
-            print(error_msg)
-            current_step.output = json.dumps({"error": error_msg})
-            return current_step.output
-        
-        print(f"Calling tool {tool_name} with input: {tool_input}")
-        result = await mcp_session.call_tool(tool_name, tool_input)
-        current_step.output = result
-        print(f"Tool {tool_name} completed successfully")
-        return result
-        
-    except Exception as e:
-        error_msg = f"Error calling tool {tool_name}: {str(e)}"
-        print(error_msg)
-        import traceback
-        print(f"Tool call traceback: {traceback.format_exc()}")
-        current_step.output = json.dumps({"error": error_msg})
+    for connection_name, tools in mcp_tools.items():
+        if any(tool.get("name") == tool_name for tool in tools):
+            mcp_name = connection_name
+            break
+    
+    if not mcp_name:
+        current_step.output = json.dumps({"error": f"Tool {tool_name} not found in any MCP connection"})
         return current_step.output
+    
+    mcp_session, _ = cl.context.session.mcp_sessions.get(mcp_name)
+    
+    if not mcp_session:
+        current_step.output = json.dumps({"error": f"MCP {mcp_name} not found in any MCP connection"})
+        return current_step.output
+    
+    try:
+        current_step.output = await mcp_session.call_tool(tool_name, tool_input)
+    except Exception as e:
+        current_step.output = json.dumps({"error": str(e)})
+    
+    return current_step.output
 
 async def call_gemini(chat_messages):
     mcp_tools = cl.user_session.get("mcp_tools", {})
@@ -216,7 +172,7 @@ async def call_gemini(chat_messages):
     try:
         # Configure the model with system instruction
         model = genai.GenerativeModel(
-            'gemini-1.5-flash',
+            'gemini-2.0-flash',
             system_instruction=SYSTEM
         )
         
@@ -389,8 +345,6 @@ async def call_gemini(chat_messages):
 @cl.on_chat_start
 async def start_chat():
     cl.user_session.set("chat_messages", [])
-    print("Chat session started")
-    print(f"Available MCP tools: {cl.user_session.get('mcp_tools', {})}")
 
 
 @cl.on_message
@@ -437,15 +391,3 @@ async def on_message(msg: cl.Message):
 
     chat_messages = cl.user_session.get("chat_messages")
     chat_messages.append({"role": "assistant", "content": final_response})
-
-@cl.on_mcp_disconnect
-async def on_mcp_disconnect(connection):
-    try:
-        print(f"MCP server {connection.name} disconnected")
-        mcp_tools = cl.user_session.get("mcp_tools", {})
-        if connection.name in mcp_tools:
-            del mcp_tools[connection.name]
-            cl.user_session.set("mcp_tools", mcp_tools)
-            print(f"Cleaned up tools for {connection.name}")
-    except Exception as e:
-        print(f"Error during MCP disconnect cleanup: {e}")
