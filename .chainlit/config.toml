@@ -53,21 +53,23 @@ edit_message = true
 
 [UI]
 # Name of the assistant.
-name = "Assistant"
+name = "CodeCrafter AI"
 
-# default_theme = "dark"
+# Default theme - light for better initial UX
+default_theme = "light"
 
-# layout = "wide"
+# Wide layout for better content display
+layout = "wide"
 
 # Description of the assistant. This is used for HTML tags.
-# description = ""
+description = "CodeCrafter AI - Your intelligent coding assistant powered by Google Gemini and Model Context Protocol"
 
 # Chain of Thought (CoT) display mode. Can be "hidden", "tool_call" or "full".
-cot = "full"
+cot = "tool_call"
 
 # Specify a CSS file that can be used to customize the user interface.
 # The CSS file can be served from the public directory or via an external link.
-# custom_css = "/public/test.css"
+custom_css = "/public/style.css"
 
 # Specify a Javascript file that can be used to customize the user interface.
 # The Javascript file can be served from the public directory.
